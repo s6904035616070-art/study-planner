@@ -19,7 +19,7 @@ nav button.on{color:var(--ac);font-weight:700}
 .row{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--bd)}.row:last-child{border:0}
 .grow{flex:1;min-width:0}.mu{color:var(--mu);font-size:12px}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .badge{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--ac);color:#fff;white-space:nowrap}.badge.red{background:var(--red)}.badge.gray{background:var(--mu)}
-.f{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-top:8px}
+.f{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-top:8px;align-items:end}.lb{display:flex;flex-direction:column;gap:2px}.lb input,.lb select{width:100%}header select{max-width:55%}
 input,select,textarea,button{font:inherit;padding:7px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx)}
 button.p{background:var(--ac);color:#fff;border:0}button.x{border:0;background:none;color:var(--red)}
 .bar{height:8px;background:var(--bd);border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ac)}
@@ -36,8 +36,9 @@ const SUPABASE_URL = 'https://dpgmettkmwrcewwexcof.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_aztW7V4TImJaILWKsqVTtg_n4wKISY_';
 // ==============================================================
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const TABLES = ['courses','exams','tasks','blocks','topics','scores'];
-const S = {}; TABLES.forEach(t => S[t] = []);
+const TABLES = ['terms','courses','exams','tasks','blocks','topics','scores','holidays'];
+const S = {allCourses: []}; TABLES.forEach(t => S[t] = []);
+let termId = null;
 let tab = 'dash', day = today();
 const DAYS = ['อา.','จ.','อ.','พ.','พฤ.','ศ.','ส.'];
 const STAT = ['ยังไม่อ่าน','อ่านแล้ว','ทำโจทย์แล้ว','เข้าใจแล้ว'];
@@ -48,7 +49,7 @@ function today(d = new Date()) { const z = d.getTimezoneOffset(); return new Dat
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const t5 = s => s ? s.slice(0, 5) : '';
 const dl = d => Math.round((new Date(d + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5);
-const course = id => S.courses.find(c => c.id === id);
+const course = id => S.allCourses.find(c => c.id === id);
 const cdot = id => { const c = course(id); return c ? `<span class="dot" style="background:${c.color}"></span>${esc(c.name)}` : '<span class="mu">ทั่วไป</span>'; };
 const fdate = d => new Date(d + 'T00:00:00').toLocaleDateString('th-TH', {day:'numeric', month:'short', year:'2-digit'});
 function cd(d, done) {
@@ -59,30 +60,53 @@ function cd(d, done) {
   return `<span class="badge ${n <= 3 ? 'red' : ''}">อีก ${n} วัน</span>`;
 }
 
+// ---------- helpers ----------
+const tl = t => `${t.semester}/${t.year}`;
+const curTerm = () => S.terms.find(t => t.id === termId);
+const holOf = d => S.holidays.find(x => x.start_date <= d && d <= x.end_date);
+const addD = (d, n) => today(new Date(new Date(d + 'T00:00:00').getTime() + n * 864e5));
+const inTerm = d => { const T = curTerm(); return !T || ((!T.start_date || d >= T.start_date) && (!T.end_date || d <= T.end_date)); };
+
 // ---------- data ----------
 async function load() {
   const r = await Promise.all(TABLES.map(t => sb.from(t).select('*')));
   TABLES.forEach((t, i) => S[t] = r[i].data || []);
+  S.terms.sort((a, b) => b.year - a.year || b.semester - a.semester);
+  let saved = null; try { saved = localStorage.getItem('term'); } catch (_) {}
+  if (!S.terms.find(t => t.id === termId)) termId = S.terms.find(t => t.id === saved)?.id || S.terms[0]?.id || null;
+  S.allCourses = S.courses;
+  S.courses = S.allCourses.filter(c => c.term_id === termId);
+  const ids = new Set(S.courses.map(c => c.id)), inT = x => !x.course_id || ids.has(x.course_id);
+  ['exams', 'tasks', 'topics', 'scores'].forEach(t => S[t] = S[t].filter(inT));
   render();
 }
-async function add(t, o) { const {error} = await sb.from(t).insert(o); if (error) alert(error.message); await load(); }
+async function add(t, o) {
+  const {data, error} = await sb.from(t).insert(o).select();
+  if (error) alert(error.message); else if (t === 'terms' && data) { termId = data[0].id; try { localStorage.setItem('term', termId); } catch (_) {} }
+  await load();
+}
 async function upd(t, id, o) { await sb.from(t).update(o).eq('id', id); await load(); }
-async function del(t, id) { if (confirm('ลบรายการนี้?')) { await sb.from(t).delete().eq('id', id); await load(); } }
+async function del(t, id) { if (confirm(t === 'terms' ? 'ลบภาคเรียนนี้ พร้อมวิชา/สอบ/เนื้อหา/คะแนนทั้งหมดในภาคนี้?' : 'ลบรายการนี้?')) { await sb.from(t).delete().eq('id', id); await load(); } }
 
 // ---------- form builder ----------
 const copts = () => [['', 'ทั่วไป'], ...S.courses.map(c => [c.id, c.name])];
 function form(t, fields) {
+  const req = n => ['title', 'name', 'exam_date', 'start_date', 'end_date', 'block_date', 'year'].includes(n) || (t === 'blocks' && n === 'start_time');
   return `<form class="f" data-t="${t}">${fields.map(([n, label, type, opt, def]) => {
-    if (type === 'select') return `<select name="${n}" title="${label}">${(opt || copts()).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>`;
-    return `<input name="${n}" type="${type}" placeholder="${label}" title="${label}" value="${def ?? ''}" ${n === 'title' || n === 'name' ? 'required' : ''} ${type === 'number' ? 'step="any"' : ''}>`;
+    const el = type === 'select'
+      ? `<select name="${n}">${(opt || copts()).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>`
+      : `<input name="${n}" type="${type}" value="${def ?? ''}" ${req(n) ? 'required' : ''} ${type === 'number' ? 'step="any"' : ''}>`;
+    return `<label class="lb"><span class="mu">${label}</span>${el}</label>`;
   }).join('')}<button class="p">+ เพิ่ม</button></form>`;
 }
 document.addEventListener('submit', e => {
   const f = e.target.closest('form[data-t]'); if (!f) return; e.preventDefault();
   const o = {};
   new FormData(f).forEach((v, k) => { o[k] = v === '' ? null : (f.elements[k].type === 'number' ? Number(v) : v); });
+  if (f.dataset.t === 'courses') o.term_id = termId;
   add(f.dataset.t, o);
 });
+document.addEventListener('change', e => { if (e.target.id === 'termSel') { termId = e.target.value; try { localStorage.setItem('term', termId); } catch (_) {} load(); } });
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-a]'); if (!b) return;
   const {a, t, id} = b.dataset;
@@ -92,6 +116,8 @@ document.addEventListener('click', e => {
   if (a === 'day') { day = today(new Date(new Date(day + 'T00:00:00').getTime() + Number(b.dataset.v) * 864e5)); render(); }
   if (a === 'tab') { tab = b.dataset.v; render(); }
   if (a === 'seed') seed();
+  if (a === 'holday') { const note = prompt('หยุดวันนี้ (วันที่ที่เลือกอยู่) เพราะอะไร?', 'หยุด'); if (note !== null) add('holidays', {start_date: day, end_date: day, note}); }
+  if (a === 'holweek') { const mon = addD(day, -((new Date(day + 'T00:00:00').getDay() + 6) % 7)); const note = prompt('หมายเหตุสัปดาห์หยุด (เช่น สัปดาห์สอบ, หยุดสงกรานต์)', 'หยุด'); if (note !== null) add('holidays', {start_date: mon, end_date: addD(mon, 6), note}); }
   if (a === 'notify') Notification.requestPermission().then(() => alert('เปิดแจ้งเตือนแล้ว (ต้องเปิดหน้าเว็บค้างไว้)'));
   if (a === 'print') window.print();
   });
@@ -105,18 +131,19 @@ function taskRow(k) {
 }
 function dayItems(d) {
   const wd = new Date(d + 'T00:00:00').getDay();
-  const cls = S.courses.filter(c => c.day === wd && c.start_time).map(c => ({s: t5(c.start_time), e: t5(c.end_time), title: `เรียน ${c.name}`, sub: c.room, color: c.color, cls: true}));
+  const cls = holOf(d) || !inTerm(d) ? [] : S.courses.filter(c => c.day === wd && c.start_time).map(c => ({s: t5(c.start_time), e: t5(c.end_time), title: `เรียน ${c.name}`, sub: c.room, color: c.color, cls: true}));
   const bl = S.blocks.filter(b => b.block_date === d).map(b => ({s: t5(b.start_time), e: t5(b.end_time), title: b.title, sub: BK[b.kind], color: course(b.course_id)?.color || '#9ca3af', b}));
   const ex = S.exams.filter(x => x.exam_date === d).map(x => ({s: t5(x.start_time), e: t5(x.end_time), title: `สอบ${x.type === 'final' ? 'ปลายภาค' : 'กลางภาค'} ${course(x.course_id)?.name || ''}`, sub: x.room, color: '#dc2626', cls: true}));
   return [...cls, ...bl, ...ex].sort((a, b) => a.s.localeCompare(b.s));
 }
 function dayHTML(d, edit) {
-  const it = dayItems(d);
-  return it.length ? it.map(i => `<div class="row" style="border-left:4px solid ${i.color};padding-left:8px">
+  const it = dayItems(d), hl = holOf(d);
+  const ban = hl ? `<div class="row" style="background:var(--bg);border-radius:8px;padding:8px">🏖️ <b>วันหยุด/ไม่มีเรียน</b> <span class="mu">${esc(hl.note || '')}</span></div>` : '';
+  return ban + (it.length ? it.map(i => `<div class="row" style="border-left:4px solid ${i.color};padding-left:8px">
     <div style="width:92px" class="mu">${i.s}${i.e ? '–' + i.e : ''}</div>
     <div class="grow ${i.b?.done ? 'done' : ''}"><b>${esc(i.title)}</b><div class="mu">${esc(i.sub || '')}</div></div>
     ${edit && i.b ? `<button data-a="toggle" data-t="blocks" data-id="${i.b.id}" data-v="${i.b.done}">${i.b.done ? '✅' : '⬜'}</button><button class="x" data-a="del" data-t="blocks" data-id="${i.b.id}">✕</button>` : ''}</div>`).join('')
-    : '<div class="mu">ยังไม่มีตารางวันนี้</div>';
+    : '<div class="mu">ยังไม่มีรายการ</div>');
 }
 function progress(cid) {
   const t = S.topics.filter(x => x.course_id === cid); if (!t.length) return 0;
@@ -138,7 +165,10 @@ const V = {
     return `<div class="card"><div class="row"><button data-a="day" data-v="-1">«</button><h2 class="grow" style="text-align:center;margin:0">${d.toLocaleDateString('th-TH', {weekday:'long', day:'numeric', month:'long', year:'numeric'})}</h2><button data-a="day" data-v="1">»</button></div>
     ${dayHTML(day, true)}
     ${form('blocks', [['block_date', 'วันที่', 'date', 0, day], ['start_time', 'เริ่ม', 'time'], ['end_time', 'จบ', 'time'], ['title', 'ทำอะไร เช่น อ่านเคมีบท 3', 'text'], ['course_id', 'วิชา', 'select'], ['kind', 'ประเภท', 'select', Object.entries(BK)]])}
-    <button class="noprint" data-a="print">🖨️ ส่งออกเป็น PDF (ไปใส่ GoodNotes)</button></div>`;
+    <button class="noprint" data-a="print">🖨️ ส่งออกเป็น PDF (ไปใส่ GoodNotes)</button></div>
+    <div class="card noprint"><h2>🏖️ วันหยุด / สัปดาห์ที่ไม่มีเรียน</h2><button data-a="holday">หยุดเฉพาะวันที่เลือกอยู่</button> <button data-a="holweek">หยุดทั้งสัปดาห์ของวันที่เลือกอยู่</button>
+    ${form('holidays', [['start_date', 'ตั้งแต่วันที่', 'date'], ['end_date', 'ถึงวันที่', 'date'], ['note', 'หมายเหตุ', 'text']])}
+    ${[...S.holidays].sort((a, b) => a.start_date.localeCompare(b.start_date)).map(x => `<div class="row"><div class="grow">${fdate(x.start_date)} – ${fdate(x.end_date)} <span class="mu">${esc(x.note || '')}</span></div><button class="x" data-a="del" data-t="holidays" data-id="${x.id}">✕</button></div>`).join('')}</div>`;
   },
   tasks() {
     const l = [...S.tasks].sort((a, b) => a.done - b.done || (a.due_date || '9').localeCompare(b.due_date || '9'));
@@ -163,19 +193,28 @@ const V = {
     }).join('')}`;
   },
   courses() {
-    return `<div class="card"><h2>วิชาเทอมนี้ (${S.courses.length})</h2>
-    ${S.courses.length ? '' : '<button class="p" data-a="seed">⚡ โหลดข้อมูล 9 วิชา + วันสอบจากตารางเรียน</button>'}
+    const T = curTerm();
+    const termCard = `<div class="card"><h2>🗓️ ภาคเรียน</h2>${S.terms.map(t => `<div class="row"><div class="grow"><b>ภาค ${tl(t)}</b> <span class="mu">${t.start_date ? fdate(t.start_date) : '?'} – ${t.end_date ? fdate(t.end_date) : '?'}</span></div><button class="x" data-a="del" data-t="terms" data-id="${t.id}">✕</button></div>`).join('') || '<div class="mu">ยังไม่มีภาคเรียน เพิ่มอันแรกด้านล่างได้เลย</div>'}
+      ${form('terms', [['year', 'ปีการศึกษา (พ.ศ.)', 'number', 0, 2569], ['semester', 'ภาค', 'select', [[1, '1'], [2, '2'], [3, 'ฤดูร้อน (3)']]], ['start_date', 'วันเปิดเทอม', 'date'], ['end_date', 'วันสุดท้ายที่มีเรียน', 'date']])}
+      <div class="mu">วันสุดท้ายที่มีเรียน: หลังวันนั้นตารางเรียนจะไม่ขึ้นแล้ว แต่ตารางสอบยังอยู่ · สลับภาคเรียนได้ที่เมนูมุมบนขวา</div></div>`;
+    if (!T) return termCard + `<div class="card"><button class="p" data-a="seed">⚡ โหลดตัวอย่าง เทอม 2/2569 (9 วิชา + วันสอบ)</button></div>`;
+    return termCard + `<div class="card"><h2>วิชาในภาค ${tl(T)} (${S.courses.length})</h2>
+    ${T.year === 2569 && T.semester === 2 && !S.courses.length ? '<button class="p" data-a="seed">⚡ โหลดตัวอย่าง 9 วิชา + วันสอบ</button>' : ''}
     ${S.courses.map(c => `<div class="row"><span class="dot" style="background:${c.color}"></span><div class="grow"><b>${esc(c.name)}</b> <span class="mu">${esc(c.code)} · ${c.credits} นก. · เป้า ${esc(c.target_grade)}</span><div class="mu">${DAYS[c.day] || ''} ${t5(c.start_time)}–${t5(c.end_time)} · ${esc(c.room)} ${esc(c.teacher || '')}</div></div><button class="x" data-a="del" data-t="courses" data-id="${c.id}">✕</button></div>`).join('')}
-    ${form('courses', [['code', 'รหัสวิชา', 'text'], ['name', 'ชื่อวิชา', 'text'], ['section', 'ตอนเรียน', 'text'], ['credits', 'หน่วยกิต', 'number'], ['day', 'วัน', 'select', DAYS.map((d, i) => [i, d])], ['start_time', 'เริ่ม', 'time'], ['end_time', 'จบ', 'time'], ['room', 'ห้อง', 'text'], ['teacher', 'อาจารย์', 'text'], ['color', 'สี', 'color', 0, '#14b8a6'], ['target_grade', 'เกรดเป้าหมาย', 'text', 0, 'A']])}</div>`;
+    ${form('courses', [['code', 'รหัสวิชา', 'text'], ['name', 'ชื่อวิชา', 'text'], ['section', 'ตอนเรียน', 'text'], ['credits', 'หน่วยกิต', 'number'], ['day', 'วันเรียนประจำ', 'select', [['', 'ไม่มี (มีแต่สอบ)'], ...DAYS.map((d, i) => [i, d])]], ['start_time', 'เริ่ม', 'time'], ['end_time', 'จบ', 'time'], ['room', 'ห้อง', 'text'], ['teacher', 'อาจารย์', 'text'], ['color', 'สี', 'color', 0, '#14b8a6'], ['target_grade', 'เกรดเป้าหมาย', 'text', 0, 'A']])}</div>`;
   }
 };
 const TABS = [['dash', '🏠', 'หน้าแรก'], ['plan', '🕒', 'ตารางวัน'], ['tasks', '📝', 'งาน'], ['exams', '📅', 'สอบ'], ['topics', '📖', 'เนื้อหา'], ['scores', '🎯', 'คะแนน'], ['courses', '📚', 'วิชา']];
 function render() {
-  document.body.innerHTML = `<header><h1>🎓 Study Planner — เทอม 2/2569</h1></header><main>${V[tab]()}</main><nav>${TABS.map(([k, i, l]) => `<button data-a="tab" data-v="${k}" class="${tab === k ? 'on' : ''}">${i}<br>${l}</button>`).join('')}</nav>`;
+  if (!S.terms.length) tab = 'courses';
+  document.body.innerHTML = `<header><h1>🎓 Study Planner</h1>${S.terms.length ? `<select id="termSel">${S.terms.map(t => `<option value="${t.id}" ${t.id === termId ? 'selected' : ''}>ภาค ${tl(t)}</option>`).join('')}</select>` : ''}</header><main>${V[tab]()}</main><nav>${TABS.map(([k, i, l]) => `<button data-a="tab" data-v="${k}" class="${tab === k ? 'on' : ''}">${i}<br>${l}</button>`).join('')}</nav>`;
 }
 
 // ---------- seed: จากตารางเรียนของคุณ ----------
 async function seed() {
+  let T = S.terms.find(t => t.year === 2569 && t.semester === 2);
+  if (!T) { const r = await sb.from('terms').insert({year: 2569, semester: 2}).select(); if (r.error) return alert(r.error.message); T = r.data[0]; }
+  termId = T.id;
   const C = [
     ['040113001', 'เคมีสำหรับวิศวกร', 'S.1', 3, 1, '08:30', '11:30', '78-903', '#f59e0b'],
     ['040113002', 'ปฏิบัติการเคมีสำหรับวิศวกร', 'L.12', 1, 2, '09:00', '12:00', '71-301', '#ec4899'],
@@ -186,7 +225,7 @@ async function seed() {
     ['040333114', 'ปฏิบัติการวิศวกรรมไฟฟ้าเบื้องต้น', 'L.1', 1, 1, '16:00', '19:00', '78-417', '#f59e0b'],
     ['080103002', 'ภาษาอังกฤษ 2', 'S.104', 3, 4, '13:00', '16:00', '78-304', '#f97316'],
     ['080303601', 'มนุษยสัมพันธ์', 'S.1', 3, 2, '13:00', '16:00', '31-1102B', '#ec4899']
-  ].map(([code, name, section, credits, day, s, e, room, color]) => ({code, name, section, credits, day, start_time: s, end_time: e, room, color}));
+  ].map(([code, name, section, credits, day, s, e, room, color]) => ({code, name, section, credits, day, start_time: s, end_time: e, room, color, term_id: T.id}));
   const {data, error} = await sb.from('courses').insert(C).select();
   if (error) return alert(error.message);
   const id = code => data.find(c => c.code === code).id;
