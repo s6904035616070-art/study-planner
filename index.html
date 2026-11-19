@@ -61,6 +61,7 @@ function cd(d, done) {
 }
 
 // ---------- helpers ----------
+const examDay = d => S.exams.some(x => x.exam_date === d && x.type !== 'quiz');
 const tl = t => `${t.semester}/${t.year}`;
 const curTerm = () => S.terms.find(t => t.id === termId);
 const holOf = d => S.holidays.find(x => x.start_date <= d && d <= x.end_date);
@@ -131,7 +132,7 @@ function taskRow(k) {
 }
 function dayItems(d) {
   const wd = new Date(d + 'T00:00:00').getDay();
-  const cls = holOf(d) || !inTerm(d) ? [] : S.courses.filter(c => c.day === wd && c.start_time).map(c => ({s: t5(c.start_time), e: t5(c.end_time), title: `เรียน ${c.name}`, sub: c.room, color: c.color, cls: true}));
+  const cls = holOf(d) || !inTerm(d) || examDay(d) ? [] : S.courses.filter(c => c.day === wd && c.start_time).map(c => ({s: t5(c.start_time), e: t5(c.end_time), title: `เรียน ${c.name}`, sub: c.room, color: c.color, cls: true}));
   const bl = S.blocks.filter(b => b.block_date === d).map(b => ({s: t5(b.start_time), e: t5(b.end_time), title: b.title, sub: BK[b.kind], color: course(b.course_id)?.color || '#9ca3af', b}));
   const ex = S.exams.filter(x => x.exam_date === d).map(x => ({s: t5(x.start_time), e: t5(x.end_time), title: `สอบ${x.type === 'final' ? 'ปลายภาค' : 'กลางภาค'} ${course(x.course_id)?.name || ''}`, sub: x.room, color: '#dc2626', cls: true}));
   return [...cls, ...bl, ...ex].sort((a, b) => a.s.localeCompare(b.s));
@@ -139,7 +140,8 @@ function dayItems(d) {
 function dayHTML(d, edit) {
   const it = dayItems(d), hl = holOf(d);
   const ban = hl ? `<div class="row" style="background:var(--bg);border-radius:8px;padding:8px">🏖️ <b>วันหยุด/ไม่มีเรียน</b> <span class="mu">${esc(hl.note || '')}</span></div>` : '';
-  return ban + (it.length ? it.map(i => `<div class="row" style="border-left:4px solid ${i.color};padding-left:8px">
+  const eb = !hl && examDay(d) ? '<div class="row" style="background:var(--bg);border-radius:8px;padding:8px">📝 <b>วันสอบ</b> <span class="mu">ไม่มีเรียนปกติ</span></div>' : '';
+  return ban + eb + (it.length ? it.map(i => `<div class="row" style="border-left:4px solid ${i.color};padding-left:8px">
     <div style="width:92px" class="mu">${i.s}${i.e ? '–' + i.e : ''}</div>
     <div class="grow ${i.b?.done ? 'done' : ''}"><b>${esc(i.title)}</b><div class="mu">${esc(i.sub || '')}</div></div>
     ${edit && i.b ? `<button data-a="toggle" data-t="blocks" data-id="${i.b.id}" data-v="${i.b.done}">${i.b.done ? '✅' : '⬜'}</button><button class="x" data-a="del" data-t="blocks" data-id="${i.b.id}">✕</button>` : ''}</div>`).join('')
